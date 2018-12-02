@@ -1,4 +1,14 @@
 [[package]]
 name = "aoc"
 version = "0.1.0"
+dependencies = [
+ "levenshtein 1.0.3 (registry+https://github.com/rust-lang/crates.io-index)",
+]
 
+[[package]]
+name = "levenshtein"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[metadata]
+"checksum levenshtein 1.0.3 (registry+https://github.com/rust-lang/crates.io-index)" = "a95048bfac59889276c823c01173bb02b798433d677d37c315cc2dbe49e5a2d8"

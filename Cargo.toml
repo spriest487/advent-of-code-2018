@@ -5,3 +5,4 @@ authors = ["spriest487 <spriest487@googlemail.com>"]
 edition = "2018"
 
 [dependencies]
+levenshtein = "1.0"
