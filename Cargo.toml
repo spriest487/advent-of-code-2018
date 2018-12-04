@@ -7,6 +7,7 @@ edition = "2018"
 [dependencies]
 levenshtein = "1.0"
 regex = "1.1"
+chrono = "0.4.6"
 
 [[bin]]
 name = "day_1"
@@ -19,3 +20,7 @@ path = "src/day_2.rs"
 [[bin]]
 name = "day_3"
 path = "src/day_3.rs"
+
+[[bin]]
+name = "day_4"
+path = "src/day_4.rs"
