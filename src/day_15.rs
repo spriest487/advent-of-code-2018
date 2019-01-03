@@ -6,15 +6,57 @@ use {
         astar::Pathfinder,
         point::{
             Point,
-            CavernWorld,
+            Neighbors,
         },
     },
     std::{
         fmt,
         cmp::Ordering,
         collections::HashSet,
+        usize,
     },
 };
+
+pub struct ManhattanDistHeuristic;
+
+impl astar::Heuristic for ManhattanDistHeuristic {
+    type Item = Point;
+    type Score = usize;
+
+    fn score(from: &Point, to: &Point) -> usize {
+        from.manhattan_dist_to(*to)
+    }
+
+    fn zero_score() -> usize {
+        0
+    }
+
+    fn infinity_score() -> usize {
+        usize::MAX
+    }
+}
+
+pub struct CavernWorld;
+
+impl astar::World for CavernWorld {
+    type Point = Point;
+    type Score = usize;
+    type Neighbors = Neighbors;
+
+    type Heuristic = ManhattanDistHeuristic;
+
+    fn neighbors(origin: &Point) -> Neighbors {
+        origin.neighbors_reading_order()
+    }
+
+    fn neighbor_dist() -> usize {
+        1
+    }
+
+    fn point_order(a: &Point, b: &Point) -> Ordering {
+        Point::cmp_reading_order(*a, *b)
+    }
+}
 
 type CavernPathfinder = Pathfinder<CavernWorld>;
 
@@ -136,29 +178,25 @@ impl Cavern {
         }
     }
 
-    fn winning_team(&self) -> Option<Team> {
-        let mut winner = None;
-        for fighter in &self.fighters {
-            if winner == None {
-                winner = Some(fighter.team)
-            } else if winner != Some(fighter.team) {
-                return None;
-            }
-        }
-        winner
-    }
-
-    fn move_fighter(&mut self, i: usize, pathfinder: &mut CavernPathfinder) {
+    fn find_targets(&self, i: usize, targets: &mut Vec<usize>) {
+        targets.clear();
         let fighter = &self.fighters[i];
 
-        let dests: HashSet<_> = self.fighters.iter().enumerate()
+        targets.extend(self.fighters.iter().enumerate()
+            .filter(|(_, other)| other.hp > 0)
             .filter_map(|(j, other)| if other.team != fighter.team {
                 Some(j)
             } else {
                 None
-            })
+            }));
+    }
+
+    fn move_fighter(&mut self, i: usize, targets: &[usize], pathfinder: &mut CavernPathfinder) {
+        let fighter = &self.fighters[i];
+
+        let dests: HashSet<_> = targets.iter()
             .flat_map(|j| {
-                let target_pos = self.fighters[j].pos;
+                let target_pos = self.fighters[*j].pos;
                 target_pos.neighbors_reading_order()
             })
             .filter(|p| self.is_free_space(*p) || *p == fighter.pos)
@@ -202,17 +240,58 @@ impl Cavern {
         }
     }
 
-    fn tick(&mut self, pathfinder: &mut CavernPathfinder) -> Option<Team> {
-        if let Some(winner) = self.winning_team() {
-            return Some(winner);
+    fn resolve_attacks(&mut self, i: usize) {
+        let neighbors = self.fighters[i].pos.neighbors_reading_order();
+
+        let target_index = neighbors
+            .filter_map(|neighbor| {
+                self.fighters.iter().enumerate()
+                    .filter_map(|(j, f)| {
+                        if f.pos == neighbor
+                            && f.hp > 0
+                            && f.team != self.fighters[i].team {
+                            Some(j)
+                        } else {
+                            None
+                        }
+                    })
+                    .next()
+            })
+            .min_by(|a, b| {
+                let a = &self.fighters[*a];
+                let b = &self.fighters[*b];
+                match a.hp.cmp(&b.hp) {
+                    Ordering::Equal => Point::cmp_reading_order(a.pos, b.pos),
+                    hp_order => hp_order,
+                }
+            });
+
+        if let Some(j) = target_index {
+            self.fighters[j].hp = isize::max(0, self.fighters[j].hp - ATTACK_POWER);
         }
+    }
+
+    fn tick(&mut self, pathfinder: &mut CavernPathfinder) -> Option<Team> {
+        let mut targets = Vec::new();
 
         self.fighters.sort_by(|a, b| Point::cmp_reading_order(a.pos, b.pos));
 
         for i in 0..self.fighters.len() {
-            self.move_fighter(i, pathfinder);
+            if self.fighters[i].hp > 0 {
+                self.find_targets(i, &mut targets);
+                if targets.is_empty() {
+                    self.fighters.retain(|f| f.hp > 0);
+
+                    // all enemies are dead, battle is over
+                    return Some(self.fighters[i].team);
+                }
+
+                self.move_fighter(i, &targets, pathfinder);
+                self.resolve_attacks(i);
+            }
         }
 
+        self.fighters.retain(|f| f.hp > 0);
         None
     }
 }
@@ -240,17 +319,26 @@ fn main() {
     let input = include_str!("day_15.txt");
     let mut cavern = Cavern::parse(input);
 
-    println!("{}", cavern);
-//    println!("{:#?}", cavern.fighters);
-
     let mut pathfinder = CavernPathfinder::new();
 
-    cavern.tick(&mut pathfinder);
-    println!("{}", cavern);
+    let mut time = 0;
 
-    cavern.tick(&mut pathfinder);
-    println!("{}", cavern);
+    loop {
+//        println!("{}", cavern);
 
-    cavern.tick(&mut pathfinder);
-    println!("{}", cavern);
+        if let Some(_winner) = cavern.tick(&mut pathfinder) {
+            println!("{}", cavern);
+
+            for f in &cavern.fighters {
+                println!("{} with {} ", f.team, f.hp);
+            }
+
+            let hp_sum = cavern.fighters.iter().map(|f| f.hp).sum::<isize>();
+            println!("outcome: {} rounds * {} remaining HP = {}", time, hp_sum, hp_sum * time);
+
+            break;
+        } else {
+            time += 1;
+        }
+    }
 }

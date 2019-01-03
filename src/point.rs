@@ -5,7 +5,6 @@ use {
         fmt,
         usize,
     },
-    crate::astar,
 };
 
 #[derive(Debug, Eq, PartialEq, Hash, Copy, Clone)]
@@ -98,46 +97,5 @@ impl Iterator for Neighbors {
         };
         self.dir += 1;
         next
-    }
-}
-
-pub struct ManhattanDistHeuristic;
-
-impl astar::Heuristic for ManhattanDistHeuristic {
-    type Item = Point;
-    type Score = usize;
-
-    fn score(from: &Point, to: &Point) -> usize {
-        from.manhattan_dist_to(*to)
-    }
-
-    fn zero_score() -> usize {
-        0
-    }
-
-    fn infinity_score() -> usize {
-        usize::MAX
-    }
-}
-
-pub struct CavernWorld;
-
-impl astar::World for CavernWorld {
-    type Point = Point;
-    type Score = usize;
-    type Neighbors = Neighbors;
-
-    type Heuristic = ManhattanDistHeuristic;
-
-    fn neighbors(origin: &Point) -> Neighbors {
-        origin.neighbors_reading_order()
-    }
-
-    fn neighbor_dist() -> usize {
-        1
-    }
-
-    fn point_order(a: &Point, b: &Point) -> Ordering {
-        Point::cmp_reading_order(*a, *b)
     }
 }

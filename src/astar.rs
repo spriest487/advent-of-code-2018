@@ -143,8 +143,35 @@ impl<W: World> Pathfinder<W> {
 
 #[cfg(test)]
 mod test {
-    use super::*;
-    use crate::point::*;
+    use {
+        super::*,
+        crate::point::*,
+        std::usize,
+    };
+
+    struct TestHeuristic;
+
+    impl Heuristic for TestHeuristic {
+        type Item = Point;
+        type Score = usize;
+
+        fn score(from: &Point, to: &Point) -> usize { from.manhattan_dist_to(*to) }
+        fn zero_score() -> <Self as Heuristic>::Score { 0 }
+        fn infinity_score() -> <Self as Heuristic>::Score { usize::MAX }
+    }
+
+    struct TestWorld;
+
+    impl World for TestWorld {
+        type Point = Point;
+        type Score = usize;
+        type Neighbors = Neighbors;
+        type Heuristic = TestHeuristic;
+
+        fn neighbors(origin: &Point) -> Neighbors { origin.neighbors_reading_order() }
+        fn neighbor_dist() -> usize { 1 }
+        fn point_order(a: &Point, b: &Point) -> Ordering { a.cmp_reading_order(*b) }
+    }
 
     fn load_test_area(map: &str) -> Vec<Point> {
         let mut points = Vec::new();
@@ -170,7 +197,7 @@ mod test {
             #   #
             #####");
 
-        let mut pathfinder: Pathfinder<CavernWorld> = Pathfinder::new();
+        let mut pathfinder: Pathfinder<TestWorld> = Pathfinder::new();
         let tile_pred = |p: &Point| area.contains(p);
 
         let mut path = Vec::new();
@@ -190,7 +217,7 @@ mod test {
             # ###
             #####");
 
-        let mut pathfinder: Pathfinder<CavernWorld> = Pathfinder::new();
+        let mut pathfinder: Pathfinder<TestWorld> = Pathfinder::new();
         let tile_pred = |p: &Point| area.contains(p);
 
         let mut path = Vec::new();
