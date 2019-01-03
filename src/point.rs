@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 use {
     std::{
         ops::Add,
@@ -97,5 +99,52 @@ impl Iterator for Neighbors {
         };
         self.dir += 1;
         next
+    }
+}
+
+#[derive(Debug)]
+pub struct BoundingBox {
+    min: Point,
+    max: Point,
+}
+
+impl BoundingBox {
+    pub fn of_points(mut points: impl Iterator<Item=Point>) -> BoundingBox {
+        let (mut min, mut max) = {
+            let first = points.next().unwrap();
+            (first.clone(), first.clone())
+        };
+
+        while let Some(point) = points.next() {
+            min.x = isize::min(point.x, min.x);
+            min.y = isize::min(point.y, min.y);
+            max.x = isize::max(point.x, max.x);
+            max.y = isize::max(point.y, max.y);
+        }
+
+        BoundingBox { min, max }
+    }
+
+    pub fn on_edge(&self, coord: Point) -> bool {
+        coord.x == self.min.x
+            || coord.y == self.min.y
+            || coord.x == self.max.x
+            || coord.y == self.max.y
+    }
+
+    pub fn coords(&self) -> impl Iterator<Item=Point> + '_ {
+        (self.min.x..=self.max.x)
+            .flat_map(move |x| {
+                (self.min.y..=self.max.y).map(move |y| {
+                    Point { x, y }
+                })
+            })
+    }
+
+    pub fn contains(&self, point: Point) -> bool {
+        point.x >= self.min.x
+            && point.x <= self.max.x
+            && point.y >= self.min.y
+            && point.y <= self.max.y
     }
 }

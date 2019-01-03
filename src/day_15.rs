@@ -12,9 +12,14 @@ use {
     std::{
         fmt,
         cmp::Ordering,
-        collections::HashSet,
+        collections::{
+            HashSet,
+            HashMap,
+        },
+        time::Instant,
         usize,
     },
+    rayon::prelude::*,
 };
 
 pub struct ManhattanDistHeuristic;
@@ -23,17 +28,9 @@ impl astar::Heuristic for ManhattanDistHeuristic {
     type Item = Point;
     type Score = usize;
 
-    fn score(from: &Point, to: &Point) -> usize {
-        from.manhattan_dist_to(*to)
-    }
-
-    fn zero_score() -> usize {
-        0
-    }
-
-    fn infinity_score() -> usize {
-        usize::MAX
-    }
+    fn score(from: &Point, to: &Point) -> usize { from.manhattan_dist_to(*to) }
+    fn zero_score() -> usize { 0 }
+    fn infinity_score() -> usize { usize::MAX }
 }
 
 pub struct CavernWorld;
@@ -45,17 +42,9 @@ impl astar::World for CavernWorld {
 
     type Heuristic = ManhattanDistHeuristic;
 
-    fn neighbors(origin: &Point) -> Neighbors {
-        origin.neighbors_reading_order()
-    }
-
-    fn neighbor_dist() -> usize {
-        1
-    }
-
-    fn point_order(a: &Point, b: &Point) -> Ordering {
-        Point::cmp_reading_order(*a, *b)
-    }
+    fn neighbors(origin: &Point) -> Neighbors { origin.neighbors_reading_order() }
+    fn neighbor_dist() -> usize { 1 }
+    fn point_order(a: &Point, b: &Point) -> Ordering { Point::cmp_reading_order(*a, *b) }
 }
 
 type CavernPathfinder = Pathfinder<CavernWorld>;
@@ -75,6 +64,7 @@ impl fmt::Display for Team {
     }
 }
 
+#[derive(Clone)]
 struct Fighter {
     team: Team,
     pos: Point,
@@ -82,7 +72,7 @@ struct Fighter {
     hp: isize,
 }
 
-const ATTACK_POWER: isize = 3;
+const BASE_ATTACK_POWER: isize = 3;
 
 impl Fighter {
     fn new(team: Team, pos: Point) -> Self {
@@ -115,11 +105,15 @@ impl fmt::Display for Tile {
     }
 }
 
+#[derive(Clone)]
 struct Cavern {
     tiles: Vec<Tile>,
     width: usize,
     height: usize,
     fighters: Vec<Fighter>,
+    fighter_positions: HashMap<Point, usize>,
+
+    elf_attack_power: isize,
 }
 
 impl Cavern {
@@ -150,11 +144,24 @@ impl Cavern {
             }
         }
 
-        Self {
+        let mut cavern = Self {
             tiles,
             width,
             height,
             fighters,
+            fighter_positions: HashMap::new(),
+
+            elf_attack_power: BASE_ATTACK_POWER,
+        };
+
+        cavern.refresh_fighter_positions();
+        cavern
+    }
+
+    fn refresh_fighter_positions(&mut self) {
+        self.fighter_positions.clear();
+        for (i, f) in self.fighters.iter().enumerate() {
+            self.fighter_positions.insert(f.pos, i);
         }
     }
 
@@ -166,7 +173,9 @@ impl Cavern {
     }
 
     fn fighter_at(&self, point: Point) -> Option<usize> {
-        self.fighters.iter().position(|f| f.pos == point)
+        self.fighter_positions.get(&point)
+            .filter(|&&i| self.fighters[i].hp > 0)
+            .cloned()
     }
 
     fn tile_at(&self, point: Point) -> Tile {
@@ -232,10 +241,9 @@ impl Cavern {
             });
 
             if !paths.is_empty() {
-                let new_pos = paths[0][0];
-//                    let dest = paths[0].last().unwrap();
-//                    println!("moving {} {}->{} (dest: {})", fighter.team, fighter.pos, new_pos, dest);
-                self.fighters[i].pos = new_pos;
+                // move this fighter to the first step of the chosen path
+                self.fighters[i].pos = paths[0][0];
+                self.refresh_fighter_positions();
             }
         }
     }
@@ -267,7 +275,12 @@ impl Cavern {
             });
 
         if let Some(j) = target_index {
-            self.fighters[j].hp = isize::max(0, self.fighters[j].hp - ATTACK_POWER);
+            let attack_power = match self.fighters[i].team {
+                Team::Elf => self.elf_attack_power,
+                Team::Goblin => BASE_ATTACK_POWER,
+            };
+
+            self.fighters[j].hp = isize::max(0, self.fighters[j].hp - attack_power);
         }
     }
 
@@ -275,15 +288,16 @@ impl Cavern {
         let mut targets = Vec::new();
 
         self.fighters.sort_by(|a, b| Point::cmp_reading_order(a.pos, b.pos));
+        self.refresh_fighter_positions();
 
         for i in 0..self.fighters.len() {
             if self.fighters[i].hp > 0 {
                 self.find_targets(i, &mut targets);
                 if targets.is_empty() {
-                    self.fighters.retain(|f| f.hp > 0);
+                    let winner = self.fighters[i].team;
 
                     // all enemies are dead, battle is over
-                    return Some(self.fighters[i].team);
+                    return Some(winner);
                 }
 
                 self.move_fighter(i, &targets, pathfinder);
@@ -291,8 +305,11 @@ impl Cavern {
             }
         }
 
-        self.fighters.retain(|f| f.hp > 0);
         None
+    }
+
+    fn elves(&self) -> impl Iterator<Item=&Fighter> {
+        self.fighters.iter().filter(|f| f.hp > 0 && f.team == Team::Elf)
     }
 }
 
@@ -315,30 +332,88 @@ impl fmt::Display for Cavern {
     }
 }
 
-fn main() {
-    let input = include_str!("day_15.txt");
-    let mut cavern = Cavern::parse(input);
+struct Outcome {
+    elf_power: isize,
+    elves_remaining: Vec<Fighter>,
+    winner: Team,
+    hp_sum: isize,
+    time: isize,
+}
 
-    let mut pathfinder = CavernPathfinder::new();
+impl Outcome {
+    fn new(cavern: &Cavern, winner: Team, time: isize) -> Self {
+        let hp_sum = cavern.fighters.iter().map(|f| f.hp).sum::<isize>();
 
-    let mut time = 0;
 
-    loop {
-//        println!("{}", cavern);
-
-        if let Some(_winner) = cavern.tick(&mut pathfinder) {
-            println!("{}", cavern);
-
-            for f in &cavern.fighters {
-                println!("{} with {} ", f.team, f.hp);
-            }
-
-            let hp_sum = cavern.fighters.iter().map(|f| f.hp).sum::<isize>();
-            println!("outcome: {} rounds * {} remaining HP = {}", time, hp_sum, hp_sum * time);
-
-            break;
-        } else {
-            time += 1;
+        Self {
+            hp_sum,
+            elf_power: cavern.elf_attack_power,
+            elves_remaining: cavern.elves().cloned().collect(),
+            winner,
+            time,
         }
     }
+
+    fn value(&self) -> isize {
+        self.hp_sum * self.time
+    }
+}
+
+impl fmt::Display for Outcome {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}\t\tteam survived after {}\trounds * {}\t\tremaining HP = {},\telf power = {},\tsurviving elves = {}",
+               self.winner,
+               self.time,
+               self.hp_sum,
+               self.value(),
+               self.elf_power,
+               self.elves_remaining.len())
+    }
+}
+
+fn main() {
+    let input = include_str!("day_15.txt");
+    let initial_state = Cavern::parse(input);
+
+    let total_start_time = Instant::now();
+
+    let initial_elves = initial_state.elves().count();
+
+    let chunk_size: isize = 8;
+
+    let mut winning_outcomes = (0..).filter_map(|chunk| {
+        let chunk_outcomes: Vec<Outcome> = (0..chunk_size).into_par_iter()
+            .map(|i| {
+                let mut pathfinder = CavernPathfinder::new();
+                let attack_boost = (chunk_size * chunk + i) as isize;
+
+                let mut cavern = initial_state.clone();
+                cavern.elf_attack_power += attack_boost;
+
+                let mut time = 0;
+                loop {
+                    if let Some(winner) = cavern.tick(&mut pathfinder) {
+                        break Outcome::new(&cavern, winner, time);
+                    } else {
+                        time += 1;
+                    }
+                }
+            })
+            .collect();
+
+        chunk_outcomes.into_iter()
+            .inspect(|outcome| println!("{}", outcome))
+            .find(|outcome| outcome.elves_remaining.len() == initial_elves)
+    });
+
+    let winning_outcome = winning_outcomes.next().unwrap();
+
+    println!("final outcome: {}", winning_outcome);
+
+    for elf in &winning_outcome.elves_remaining {
+        println!("  surviving elf with {} HP", elf.hp);
+    }
+
+    let total_elapsed = Instant::now() - total_start_time;
+    println!("elapsed time: {}.{}s", total_elapsed.as_secs(), total_elapsed.subsec_millis());
 }
